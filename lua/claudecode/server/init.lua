@@ -1,5 +1,6 @@
 ---@brief WebSocket server for Claude Code Neovim integration
 local claudecode_main = require("claudecode") -- Added for version access
+local client_manager = require("claudecode.server.client")
 local logger = require("claudecode.logger")
 local tcp_server = require("claudecode.server.tcp")
 local tools = require("claudecode.tools.init") -- Added: Require the tools module
@@ -15,6 +16,7 @@ local M = {}
 ---@field clients table<string, WebSocketClient> A list of connected clients
 ---@field handlers table Message handlers by method name
 ---@field ping_timer table|nil Timer for sending pings
+---@field announcement_timer table|nil Timer for IDE availability announcements
 M.state = {
   server = nil,
   port = nil,
@@ -22,6 +24,7 @@ M.state = {
   clients = {},
   handlers = {},
   ping_timer = nil,
+  announcement_timer = nil,
 }
 
 ---Initialize the WebSocket server
@@ -69,6 +72,11 @@ function M.start(config, auth_token)
           main_module.process_mention_queue(true)
         end)
       end
+
+      -- Immediately announce IDE availability to new client
+      vim.schedule(function()
+        M.announce_ide_to_client(client)
+      end)
     end,
     on_disconnect = function(client, code, reason)
       M.state.clients[client.id] = nil
@@ -97,6 +105,9 @@ function M.start(config, auth_token)
 
   M.state.ping_timer = tcp_server.start_ping_timer(server, 30000) -- Start ping timer to keep connections alive
 
+  -- Start IDE availability announcement timer
+  M.start_ide_announcement_timer()
+
   return true, server.port
 end
 
@@ -112,6 +123,12 @@ function M.stop()
     M.state.ping_timer:stop()
     M.state.ping_timer:close()
     M.state.ping_timer = nil
+  end
+
+  if M.state.announcement_timer then
+    M.state.announcement_timer:stop()
+    M.state.announcement_timer:close()
+    M.state.announcement_timer = nil
   end
 
   tcp_server.stop_server(M.state.server)
@@ -400,6 +417,96 @@ function M.broadcast(method, params)
   local json_message = vim.json.encode(message)
   tcp_server.broadcast(M.state.server, json_message)
   return true
+end
+
+---Start IDE availability announcement timer
+---Periodically updates lock file and announces IDE availability
+function M.start_ide_announcement_timer()
+  if M.state.announcement_timer then
+    return -- Already started
+  end
+
+  local lockfile = require("claudecode.lockfile")
+  local logger = require("claudecode.logger")
+
+  M.state.announcement_timer = vim.loop.new_timer()
+  if not M.state.announcement_timer then
+    logger.error("server", "Failed to create IDE announcement timer")
+    return
+  end
+
+  -- Update lock file and announce IDE availability every 5 seconds
+  M.state.announcement_timer:start(
+    1000,
+    5000,
+    vim.schedule_wrap(function()
+      if not M.state.server or not M.state.port then
+        return
+      end
+
+      -- Refresh lock file to ensure it's current
+      local success, lock_path_or_error = lockfile.create(M.state.port, M.state.auth_token)
+      if success then
+        logger.debug("server", "Refreshed IDE lock file:", lock_path_or_error)
+      else
+        logger.warn("server", "Failed to refresh IDE lock file:", lock_path_or_error)
+      end
+
+      -- Broadcast IDE availability to any connected Claude clients
+      if next(M.state.clients) then
+        M.broadcast("ide/announce", {
+          ideName = "Neovim",
+          port = M.state.port,
+          transport = "ws",
+          workspaceFolders = lockfile.get_workspace_folders(),
+          capabilities = {
+            logging = true,
+            tools = true,
+            resources = true,
+          },
+        })
+        logger.debug("server", "Announced IDE availability to connected clients")
+      end
+    end)
+  )
+
+  logger.debug("server", "Started IDE availability announcement timer")
+end
+
+---Announce IDE availability to a specific client
+---@param client WebSocketClient The client to announce to
+function M.announce_ide_to_client(client)
+  if not client or not M.state.server or not M.state.port then
+    return
+  end
+
+  local lockfile = require("claudecode.lockfile")
+  local logger = require("claudecode.logger")
+
+  local announcement = {
+    jsonrpc = "2.0",
+    method = "ide/announce",
+    params = {
+      ideName = "Neovim",
+      port = M.state.port,
+      transport = "ws",
+      workspaceFolders = lockfile.get_workspace_folders(),
+      capabilities = {
+        logging = true,
+        tools = true,
+        resources = true,
+      },
+    },
+  }
+
+  local json_message = vim.json.encode(announcement)
+  client_manager.send_message(client, json_message, function(err)
+    if err then
+      logger.warn("server", "Failed to announce IDE to client " .. client.id .. ": " .. err)
+    else
+      logger.debug("server", "Announced IDE availability to client:", client.id)
+    end
+  end)
 end
 
 ---Get server status information
