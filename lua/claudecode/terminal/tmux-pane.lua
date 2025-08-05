@@ -50,12 +50,20 @@ local function create_tmux_pane(cmd_string, env_table, focus)
   -- Create vertical split to the right with specific width
   -- Remove -d flag to focus the pane, add -l flag for specific width
   local focus_flag = focus and "" or "-d"
+
+  -- Build environment variables for tmux (using -e flag for each variable)
+  local env_flags = {}
+  for key, value in pairs(env_table) do
+    table.insert(env_flags, string.format("-e %s='%s'", key, value))
+  end
+  local env_flags_str = table.concat(env_flags, " ")
+
   local tmux_cmd = string.format(
-    "tmux split-window -h %s -l %d -c '%s' '%s %s'",
+    "tmux split-window -h %s -l %d %s -c '%s' '%s'",
     focus_flag,
     pane_width,
+    env_flags_str,
     vim.fn.getcwd(),
-    env_string,
     cmd_string
   )
 
