@@ -5,6 +5,7 @@
 local M = {}
 
 local logger = require("claudecode.logger")
+local tmux_utils = require("claudecode.terminal.tmux_utils")
 local utils = require("claudecode.utils")
 
 local popup_session_name = nil
@@ -17,100 +18,26 @@ local function cleanup_state()
   popup_session_name = nil
 end
 
-local function is_tmux_available()
-  local handle = io.popen("command -v tmux 2>/dev/null")
-  if not handle then
-    return false
-  end
-  local result = handle:read("*a")
-  handle:close()
-  return result and result:match("%S") ~= nil
-end
-
-local function is_in_tmux()
-  return vim.env.TMUX ~= nil
-end
-
-local function get_tmux_version()
-  local handle = io.popen("tmux -V 2>/dev/null")
-  if not handle then
-    return nil
-  end
-  local result = handle:read("*a")
-  handle:close()
-
-  if result then
-    local version = result:match("tmux (%d+%.%d+)")
-    if version then
-      local major, minor = version:match("(%d+)%.(%d+)")
-      return tonumber(major), tonumber(minor)
-    end
-  end
-  return nil
-end
-
-local function supports_popup()
-  local major, minor = get_tmux_version()
-  if not major or not minor then
-    return false
-  end
-  -- Popup support was added in tmux 3.2
-  return major > 3 or (major == 3 and minor >= 2)
-end
-
-local function popup_exists(session_name)
-  if not session_name then
-    return false
-  end
-
-  local handle = io.popen("tmux list-sessions -F '#{session_name}' 2>/dev/null")
-  if not handle then
-    return false
-  end
-
-  local sessions = handle:read("*a")
-  handle:close()
-
-  if not sessions then
-    return false
-  end
-
-  for session in sessions:gmatch("[^\r\n]+") do
-    if session == session_name then
-      return true
-    end
-  end
-  return false
-end
-
 local function is_valid()
-  return popup_session_name and popup_exists(popup_session_name)
-end
-
-local function generate_popup_session_name()
-  return "claude-popup-" .. os.time() .. "-" .. math.random(1000, 9999)
+  return popup_session_name and tmux_utils.session_exists(popup_session_name)
 end
 
 local function create_tmux_popup(cmd_string, env_table, effective_config)
-  if not is_in_tmux() then
+  if not tmux_utils.is_in_tmux() then
     vim.notify("Must be inside a tmux session to use tmux-popup terminal provider", vim.log.levels.ERROR)
     return false
   end
 
-  if not supports_popup() then
+  if not tmux_utils.supports_popup() then
     vim.notify("tmux-popup provider requires tmux >= 3.2 for popup support", vim.log.levels.ERROR)
     return false
   end
 
   -- Build environment variables string for tmux
-  local env_args = {}
-  for key, value in pairs(env_table) do
-    table.insert(env_args, key .. "=" .. value)
-  end
-  local env_string = table.concat(env_args, " ")
+  local env_string = tmux_utils.build_env_string(env_table)
 
   -- Generate unique session name for the popup
-  local session_name = generate_popup_session_name()
+  local session_name = tmux_utils.generate_popup_session_name()
 
   -- Calculate popup dimensions (use config percentage but adapt for popup)
   local width_percent = math.floor((effective_config.split_width_percentage or 0.5) * 100)
@@ -128,7 +55,7 @@ local function create_tmux_popup(cmd_string, env_table, effective_config)
     session_name
   )
 
-  local success = os.execute(tmux_cmd .. " 2>/dev/null") == 0
+  local success = tmux_utils.execute_tmux_command(tmux_cmd)
 
   if success then
     popup_session_name = session_name
@@ -147,7 +74,7 @@ local function focus_popup()
 
   -- For popup, we need to recreate it to show again (tmux popups close when focus is lost)
   -- Check if session still exists but popup is closed
-  if popup_exists(popup_session_name) then
+  if tmux_utils.session_exists(popup_session_name) then
     local width_percent = math.floor((config.split_width_percentage or 0.5) * 100)
     local height_percent = 80
 
@@ -158,7 +85,7 @@ local function focus_popup()
       popup_session_name
     )
 
-    local success = os.execute(cmd .. " 2>/dev/null") == 0
+    local success = tmux_utils.execute_tmux_command(cmd)
 
     if success then
       logger.debug("terminal", "Reopened tmux popup session:", popup_session_name)
@@ -179,7 +106,7 @@ local function close_popup()
 
   -- Kill the popup session
   local cmd = string.format("tmux kill-session -t '%s'", popup_session_name)
-  local success = os.execute(cmd .. " 2>/dev/null") == 0
+  local success = tmux_utils.execute_tmux_command(cmd)
 
   if success then
     logger.debug("terminal", "Closed tmux popup session:", popup_session_name)
@@ -188,38 +115,6 @@ local function close_popup()
   end
 
   cleanup_state()
-end
-
-local function find_existing_claude_popup()
-  local handle = io.popen("tmux list-sessions -F '#{session_name}' 2>/dev/null")
-  if not handle then
-    return nil
-  end
-
-  local sessions = handle:read("*a")
-  handle:close()
-
-  if not sessions then
-    return nil
-  end
-
-  for session in sessions:gmatch("[^\r\n]+") do
-    if session:match("claude%-popup%-") then
-      -- Check if this session has a Claude process
-      local check_cmd = string.format("tmux list-panes -t '%s' -F '#{pane_current_command}' 2>/dev/null", session)
-      local check_handle = io.popen(check_cmd)
-      if check_handle then
-        local command = check_handle:read("*a")
-        check_handle:close()
-        if command and command:match("claude") then
-          logger.debug("terminal", "Found existing Claude popup session:", session)
-          return session
-        end
-      end
-    end
-  end
-
-  return nil
 end
 
 ---Setup the terminal module
@@ -244,7 +139,7 @@ function M.open(cmd_string, env_table, effective_config, focus)
   end
 
   -- Check for existing Claude popup session we might have lost track of
-  local existing_session = find_existing_claude_popup()
+  local existing_session = tmux_utils.find_existing_claude_popup()
   if existing_session then
     popup_session_name = existing_session
     logger.debug("terminal", "Recovered existing Claude popup session")
@@ -282,7 +177,7 @@ function M.simple_toggle(cmd_string, env_table, effective_config)
     close_popup()
   else
     -- Check for existing Claude popup session we might have lost track of
-    local existing_session = find_existing_claude_popup()
+    local existing_session = tmux_utils.find_existing_claude_popup()
     if existing_session then
       popup_session_name = existing_session
       logger.debug("terminal", "Recovered existing Claude popup session")
@@ -324,7 +219,7 @@ end
 
 --- @return boolean
 function M.is_available()
-  return is_tmux_available() and is_in_tmux() and supports_popup()
+  return tmux_utils.is_tmux_available() and tmux_utils.is_in_tmux() and tmux_utils.supports_popup()
 end
 
 ---Ensures the Claude popup is visible (for compatibility with terminal interface)
@@ -340,7 +235,7 @@ function M._get_terminal_for_test()
   if is_valid() then
     return {
       popup_session_name = popup_session_name,
-      session_exists = popup_exists(popup_session_name),
+      session_exists = tmux_utils.session_exists(popup_session_name),
     }
   end
   return nil

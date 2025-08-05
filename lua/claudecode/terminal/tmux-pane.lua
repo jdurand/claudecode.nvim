@@ -1,10 +1,11 @@
----Tmux terminal provider for Claude Code.
+---Tmux pane terminal provider for Claude Code.
 ---Opens Claude terminal in a tmux vertical split to the right.
----@module 'claudecode.terminal.tmux'
+---@module 'claudecode.terminal.tmux-pane'
 
 local M = {}
 
 local logger = require("claudecode.logger")
+local tmux_utils = require("claudecode.terminal.tmux_utils")
 local utils = require("claudecode.utils")
 
 local session_name = nil
@@ -19,89 +20,28 @@ local function cleanup_state()
   pane_id = nil
 end
 
-local function is_tmux_available()
-  local handle = io.popen("command -v tmux 2>/dev/null")
-  if not handle then
-    return false
-  end
-  local result = handle:read("*a")
-  handle:close()
-  return result and result:match("%S") ~= nil
-end
-
-local function is_in_tmux()
-  return vim.env.TMUX ~= nil
-end
-
-local function get_current_session()
-  if not is_in_tmux() then
-    return nil
-  end
-
-  local handle = io.popen("tmux display-message -p '#S' 2>/dev/null")
-  if not handle then
-    return nil
-  end
-  local result = handle:read("*a")
-  handle:close()
-
-  if result then
-    return result:gsub("%s+$", "") -- trim whitespace
-  end
-  return nil
-end
-
-local function pane_exists(pane_id_to_check)
-  if not pane_id_to_check then
-    return false
-  end
-
-  local handle = io.popen("tmux list-panes -a -F '#{pane_id}' 2>/dev/null")
-  if not handle then
-    return false
-  end
-
-  local panes = handle:read("*a")
-  handle:close()
-
-  if not panes then
-    return false
-  end
-
-  for pane in panes:gmatch("[^\r\n]+") do
-    if pane == pane_id_to_check then
-      return true
-    end
-  end
-  return false
-end
-
 local function is_valid()
   if not session_name or not pane_id then
     return false
   end
 
-  return pane_exists(pane_id)
+  return tmux_utils.pane_exists(pane_id)
 end
 
 local function create_tmux_pane(cmd_string, env_table)
-  if not is_in_tmux() then
-    vim.notify("Must be inside a tmux session to use tmux terminal provider", vim.log.levels.ERROR)
+  if not tmux_utils.is_in_tmux() then
+    vim.notify("Must be inside a tmux session to use tmux-pane terminal provider", vim.log.levels.ERROR)
     return false
   end
 
-  local current_session = get_current_session()
+  local current_session = tmux_utils.get_current_session()
   if not current_session then
     vim.notify("Could not determine current tmux session", vim.log.levels.ERROR)
     return false
   end
 
   -- Build environment variables string for tmux
-  local env_args = {}
-  for key, value in pairs(env_table) do
-    table.insert(env_args, key .. "=" .. value)
-  end
-  local env_string = table.concat(env_args, " ")
+  local env_string = tmux_utils.build_env_string(env_table)
 
   -- Create vertical split to the right
   local tmux_cmd = string.format("tmux split-window -h -d -c '%s' '%s %s'", vim.fn.getcwd(), env_string, cmd_string)
@@ -132,7 +72,7 @@ local function focus_pane()
   end
 
   local cmd = string.format("tmux select-pane -t '%s'", pane_id)
-  local success = os.execute(cmd .. " 2>/dev/null") == 0
+  local success = tmux_utils.execute_tmux_command(cmd)
 
   if success then
     logger.debug("terminal", "Focused tmux pane:", pane_id)
@@ -149,7 +89,7 @@ local function close_pane()
   end
 
   local cmd = string.format("tmux kill-pane -t '%s'", pane_id)
-  local success = os.execute(cmd .. " 2>/dev/null") == 0
+  local success = tmux_utils.execute_tmux_command(cmd)
 
   if success then
     logger.debug("terminal", "Closed tmux pane:", pane_id)
@@ -158,30 +98,6 @@ local function close_pane()
   end
 
   cleanup_state()
-end
-
-local function find_existing_claude_pane()
-  local handle = io.popen("tmux list-panes -a -F '#{pane_id} #{pane_current_command}' 2>/dev/null")
-  if not handle then
-    return nil
-  end
-
-  local panes = handle:read("*a")
-  handle:close()
-
-  if not panes then
-    return nil
-  end
-
-  for line in panes:gmatch("[^\r\n]+") do
-    local pane, command = line:match("^(%S+)%s+(.*)$")
-    if pane and command and command:match("claude") then
-      logger.debug("terminal", "Found existing Claude pane:", pane)
-      return pane
-    end
-  end
-
-  return nil
 end
 
 ---Setup the terminal module
@@ -206,9 +122,9 @@ function M.open(cmd_string, env_table, effective_config, focus)
   end
 
   -- Check for existing Claude pane we might have lost track of
-  local existing_pane = find_existing_claude_pane()
+  local existing_pane = tmux_utils.find_existing_claude_pane()
   if existing_pane then
-    session_name = get_current_session()
+    session_name = tmux_utils.get_current_session()
     pane_id = existing_pane
     logger.debug("terminal", "Recovered existing Claude pane")
     if focus then
@@ -247,9 +163,9 @@ function M.simple_toggle(cmd_string, env_table, effective_config)
     close_pane()
   else
     -- Check for existing Claude pane we might have lost track of
-    local existing_pane = find_existing_claude_pane()
+    local existing_pane = tmux_utils.find_existing_claude_pane()
     if existing_pane then
-      session_name = get_current_session()
+      session_name = tmux_utils.get_current_session()
       pane_id = existing_pane
       logger.debug("terminal", "Recovered existing Claude pane")
       focus_pane()
@@ -290,9 +206,9 @@ function M.focus_toggle(cmd_string, env_table, effective_config)
     end
   else
     -- Check for existing Claude pane we might have lost track of
-    local existing_pane = find_existing_claude_pane()
+    local existing_pane = tmux_utils.find_existing_claude_pane()
     if existing_pane then
-      session_name = get_current_session()
+      session_name = tmux_utils.get_current_session()
       pane_id = existing_pane
       logger.debug("terminal", "Recovered existing Claude pane")
       focus_pane()
@@ -324,7 +240,7 @@ end
 
 --- @return boolean
 function M.is_available()
-  return is_tmux_available() and is_in_tmux()
+  return tmux_utils.is_tmux_available() and tmux_utils.is_in_tmux()
 end
 
 ---Ensures the Claude pane is visible (for compatibility with terminal interface)
