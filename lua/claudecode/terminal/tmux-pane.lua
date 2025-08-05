@@ -28,7 +28,7 @@ local function is_valid()
   return tmux_utils.pane_exists(pane_id)
 end
 
-local function create_tmux_pane(cmd_string, env_table)
+local function create_tmux_pane(cmd_string, env_table, focus)
   if not tmux_utils.is_in_tmux() then
     vim.notify("Must be inside a tmux session to use tmux-pane terminal provider", vim.log.levels.ERROR)
     return false
@@ -43,8 +43,21 @@ local function create_tmux_pane(cmd_string, env_table)
   -- Build environment variables string for tmux
   local env_string = tmux_utils.build_env_string(env_table)
 
-  -- Create vertical split to the right
-  local tmux_cmd = string.format("tmux split-window -h -d -c '%s' '%s %s'", vim.fn.getcwd(), env_string, cmd_string)
+  -- Calculate 30% width of terminal
+  local total_width = vim.fn.system("tmux display-message -p '#{window_width}'"):gsub("%s+$", "")
+  local pane_width = math.floor(tonumber(total_width) * 0.3)
+
+  -- Create vertical split to the right with specific width
+  -- Remove -d flag to focus the pane, add -l flag for specific width
+  local focus_flag = focus and "" or "-d"
+  local tmux_cmd = string.format(
+    "tmux split-window -h %s -l %d -c '%s' '%s %s'",
+    focus_flag,
+    pane_width,
+    vim.fn.getcwd(),
+    env_string,
+    cmd_string
+  )
 
   local handle = io.popen(tmux_cmd .. " && tmux display-message -p '#{pane_id}' 2>/dev/null")
   if not handle then
@@ -58,7 +71,7 @@ local function create_tmux_pane(cmd_string, env_table)
   if result and result:match("%S") then
     session_name = current_session
     pane_id = result:gsub("%s+$", "") -- trim whitespace
-    logger.debug("terminal", "Created tmux pane:", pane_id, "in session:", session_name)
+    logger.debug("terminal", "Created tmux pane:", pane_id, "in session:", session_name, "with width:", pane_width)
     return true
   else
     vim.notify("Failed to get tmux pane ID", vim.log.levels.ERROR)
@@ -134,13 +147,9 @@ function M.open(cmd_string, env_table, effective_config, focus)
   end
 
   -- Create new pane
-  if not create_tmux_pane(cmd_string, env_table) then
+  if not create_tmux_pane(cmd_string, env_table, focus) then
     vim.notify("Failed to create tmux pane for Claude terminal", vim.log.levels.ERROR)
     return
-  end
-
-  if focus then
-    focus_pane()
   end
 
   if config.show_native_term_exit_tip and not tip_shown then
@@ -171,11 +180,10 @@ function M.simple_toggle(cmd_string, env_table, effective_config)
       focus_pane()
     else
       -- Create new pane
-      if not create_tmux_pane(cmd_string, env_table) then
+      if not create_tmux_pane(cmd_string, env_table, true) then
         vim.notify("Failed to create tmux pane for Claude terminal", vim.log.levels.ERROR)
         return
       end
-      focus_pane()
     end
   end
 end
@@ -214,11 +222,10 @@ function M.focus_toggle(cmd_string, env_table, effective_config)
       focus_pane()
     else
       -- Create new pane
-      if not create_tmux_pane(cmd_string, env_table) then
+      if not create_tmux_pane(cmd_string, env_table, true) then
         vim.notify("Failed to create tmux pane for Claude terminal", vim.log.levels.ERROR)
         return
       end
-      focus_pane()
     end
   end
 end

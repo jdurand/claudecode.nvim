@@ -282,7 +282,8 @@ local function get_claude_command_and_env(cmd_args)
   if cmd_args and cmd_args ~= "" then
     cmd_string = base_cmd .. " " .. cmd_args
   else
-    cmd_string = base_cmd
+    -- Default to /ide session for autoconnect
+    cmd_string = base_cmd .. " /ide"
   end
 
   local sse_port_value = claudecode_server_module.state.port
