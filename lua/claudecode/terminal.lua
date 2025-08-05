@@ -2,6 +2,28 @@
 --- Supports Snacks.nvim or a native Neovim terminal fallback.
 --- @module 'claudecode.terminal'
 
+--- @class TerminalProvider
+--- @field setup fun(config: TerminalConfig)
+--- @field open fun(cmd_string: string, env_table: table, config: TerminalConfig, focus: boolean?)
+--- @field close fun()
+--- @field toggle fun(cmd_string: string, env_table: table, effective_config: TerminalConfig)
+--- @field simple_toggle fun(cmd_string: string, env_table: table, effective_config: TerminalConfig)
+--- @field focus_toggle fun(cmd_string: string, env_table: table, effective_config: TerminalConfig)
+--- @field get_active_bufnr fun(): number?
+--- @field is_available fun(): boolean
+--- @field ensure_visible? function
+--- @field _get_terminal_for_test fun(): table?
+
+--- @class TerminalConfig
+--- @field split_side "left"|"right"
+--- @field split_width_percentage number
+--- @field provider "auto"|"snacks"|"native"|"tmux-pane"|"tmux-popup"|TerminalProvider
+--- @field show_native_term_exit_tip boolean
+--- @field terminal_cmd string|nil
+--- @field auto_close boolean
+--- @field env table<string, string>
+--- @field snacks_win_opts table
+
 local M = {}
 
 local claudecode_server_module = require("claudecode.server.init")
@@ -156,6 +178,9 @@ local function get_provider()
   elseif defaults.provider == "native" then
     -- noop, will use native provider as default below
     logger.debug("terminal", "Using native terminal provider")
+  elseif defaults.provider == "tmux-pane" or defaults.provider == "tmux-popup" then
+    -- noop, will use native provider as default below
+    logger.debug("terminal", "Using tmux terminal provider")
   elseif type(defaults.provider) == "string" then
     logger.warn(
       "terminal",
@@ -349,9 +374,7 @@ function M.setup(user_term_config, p_terminal_cmd, p_env)
         defaults[k] = v
       elseif k == "split_width_percentage" and type(v) == "number" and v > 0 and v < 1 then
         defaults[k] = v
-      elseif
-        k == "provider" and (v == "snacks" or v == "native" or v == "external" or v == "auto" or type(v) == "table")
-      then
+      elseif k == "provider" and (v == "snacks" or v == "native" or v == "external" or v == "auto" or v == "tmux-pane" or v == "tmux-popup" or type(v) == "table") then
         defaults[k] = v
       elseif k == "show_native_term_exit_tip" and type(v) == "boolean" then
         defaults[k] = v
