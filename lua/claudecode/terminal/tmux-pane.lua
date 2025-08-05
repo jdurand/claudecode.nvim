@@ -51,21 +51,11 @@ local function create_tmux_pane(cmd_string, env_table, focus)
   -- Remove -d flag to focus the pane, add -l flag for specific width
   local focus_flag = focus and "" or "-d"
 
-  -- Build environment variables for tmux (using -e flag for each variable)
-  local env_flags = {}
-  for key, value in pairs(env_table) do
-    table.insert(env_flags, string.format("-e %s='%s'", key, value))
-  end
-  local env_flags_str = table.concat(env_flags, " ")
+  -- Create command with environment variables and permissions using common utility
+  local full_command = tmux_utils.create_claude_command(cmd_string, env_table, true)
 
-  local tmux_cmd = string.format(
-    "tmux split-window -h %s -l %d %s -c '%s' '%s'",
-    focus_flag,
-    pane_width,
-    env_flags_str,
-    vim.fn.getcwd(),
-    cmd_string
-  )
+  local tmux_cmd =
+    string.format("tmux split-window -h %s -l %d -c '%s' '%s'", focus_flag, pane_width, vim.fn.getcwd(), full_command)
 
   local handle = io.popen(tmux_cmd .. " && tmux display-message -p '#{pane_id}' 2>/dev/null")
   if not handle then
@@ -80,6 +70,7 @@ local function create_tmux_pane(cmd_string, env_table, focus)
     session_name = current_session
     pane_id = result:gsub("%s+$", "") -- trim whitespace
     logger.debug("terminal", "Created tmux pane:", pane_id, "in session:", session_name, "with width:", pane_width)
+
     return true
   else
     vim.notify("Failed to get tmux pane ID", vim.log.levels.ERROR)

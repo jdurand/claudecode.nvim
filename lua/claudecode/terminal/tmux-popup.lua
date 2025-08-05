@@ -36,12 +36,8 @@ local function create_tmux_popup(cmd_string, env_table, effective_config)
   -- Generate unique session name for the popup
   local session_name = tmux_utils.generate_popup_session_name()
 
-  -- Build environment variables for tmux new-session (using -e flag for each variable)
-  local env_flags = {}
-  for key, value in pairs(env_table) do
-    table.insert(env_flags, string.format("-e %s='%s'", key, value))
-  end
-  local env_flags_str = table.concat(env_flags, " ")
+  -- Create command with environment variables (no permissions for popup due to command length limits)
+  local full_command = tmux_utils.create_claude_command(cmd_string, env_table, false)
 
   -- Calculate popup dimensions (use config percentage but adapt for popup)
   local width_percent = math.floor((effective_config.split_width_percentage or 0.5) * 100)
@@ -49,13 +45,12 @@ local function create_tmux_popup(cmd_string, env_table, effective_config)
 
   -- Create popup with new session and proper environment variables
   local tmux_cmd = string.format(
-    'tmux display-popup -d \'%s\' -w %d%% -h %d%% -E \'tmux new-session -d -s "%s" %s "%s" && tmux attach-session -t "%s"\'',
+    'tmux display-popup -d \'%s\' -w %d%% -h %d%% -E \'tmux new-session -d -s "%s" "%s" && tmux attach-session -t "%s"\'',
     vim.fn.getcwd(),
     width_percent,
     height_percent,
     session_name,
-    env_flags_str,
-    cmd_string,
+    full_command,
     session_name
   )
 
@@ -64,6 +59,7 @@ local function create_tmux_popup(cmd_string, env_table, effective_config)
   if success then
     popup_session_name = session_name
     logger.debug("terminal", "Created tmux popup with session:", session_name)
+
     return true
   else
     vim.notify("Failed to create tmux popup", vim.log.levels.ERROR)

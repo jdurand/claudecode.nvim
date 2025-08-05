@@ -214,4 +214,53 @@ function M.execute_tmux_command(cmd)
   return os.execute(cmd .. " 2>/dev/null") == 0
 end
 
+---Build environment variable assignments for shell execution
+---@param env_table table
+---@return string
+function M.build_env_assignments(env_table)
+  local env_assignments = {}
+  for key, value in pairs(env_table) do
+    -- Escape single quotes in the value for shell safety
+    local escaped_value = value:gsub("'", "'\"'\"'")
+    table.insert(env_assignments, string.format("%s=%s", key, vim.fn.shellescape(escaped_value)))
+  end
+  return table.concat(env_assignments, " ")
+end
+
+---Add tool permissions to Claude command
+---@param base_command string The base Claude command
+---@return string The command with permissions
+local function add_permissions(base_command)
+  -- Add common tools that are useful for development
+  local allowed_tools = {
+    "Bash",
+    "Edit",
+    "LS",
+    "Grep",
+    "Bash(git:*)",
+    "Bash(gh:*)"
+  }
+
+  local tools_list = table.concat(allowed_tools, " ")
+  return base_command .. " --allowedTools \"" .. tools_list .. "\""
+end
+
+---Create the full command with environment variables and delay
+---@param cmd_string string The Claude command to execute
+---@param env_table table Environment variables
+---@param include_permissions boolean Whether to add tool permissions (optional)
+---@return string The complete command string
+function M.create_claude_command(cmd_string, env_table, include_permissions)
+  local env_prefix = M.build_env_assignments(env_table)
+  local claude_cmd = cmd_string
+
+  -- Only add permissions if explicitly requested and not for popup (which has issues with long commands)
+  if include_permissions then
+    claude_cmd = add_permissions(cmd_string)
+  end
+
+  local delayed_command = string.format("sleep 0.5 && %s", claude_cmd)
+  return env_prefix .. " " .. delayed_command
+end
+
 return M

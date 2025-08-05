@@ -264,6 +264,48 @@ local function is_terminal_visible(bufnr)
   return bufinfo and #bufinfo > 0 and #bufinfo[1].windows > 0
 end
 
+---Finds the best matching IDE port based on current working directory
+---@return number|nil port The port of the IDE that best matches the current directory
+local function find_best_matching_ide_port()
+  local current_cwd = vim.fn.getcwd()
+  local lockfile = require("claudecode.lockfile")
+
+  -- Get all existing lock files
+  local ide_dir = vim.fn.expand("~/.claude/ide")
+  if vim.fn.isdirectory(ide_dir) == 0 then
+    return nil
+  end
+
+  local lock_files = vim.fn.glob(ide_dir .. "/*.lock", false, true)
+  local best_match = nil
+  local best_match_length = 0
+
+  for _, lock_file in ipairs(lock_files) do
+    local port = vim.fn.fnamemodify(lock_file, ":t:r") -- Get filename without extension
+
+    -- Read and parse lock file
+    local content = vim.fn.readfile(lock_file)
+    if #content > 0 then
+      local success, lock_data = pcall(vim.json.decode, table.concat(content, ""))
+      if success and lock_data and lock_data.workspaceFolders then
+        -- Check if current directory is within any workspace folder
+        for _, workspace_folder in ipairs(lock_data.workspaceFolders) do
+          -- Check if current directory is a subdirectory of this workspace
+          if current_cwd:sub(1, #workspace_folder) == workspace_folder then
+            -- Prefer the most specific (longest) match
+            if #workspace_folder > best_match_length then
+              best_match = tonumber(port)
+              best_match_length = #workspace_folder
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return best_match
+end
+
 ---Gets the claude command string and necessary environment variables
 ---@param cmd_args string? Optional arguments to append to the command
 ---@return string cmd_string The command string
@@ -278,15 +320,24 @@ local function get_claude_command_and_env(cmd_args)
     base_cmd = cmd_from_config
   end
 
+  -- Try to find the best matching IDE based on current working directory
+  local matched_port = find_best_matching_ide_port()
+  local sse_port_value = matched_port or claudecode_server_module.state.port
+
   local cmd_string
   if cmd_args and cmd_args ~= "" then
     cmd_string = base_cmd .. " " .. cmd_args
   else
-    -- Default to /ide session for autoconnect
-    cmd_string = base_cmd .. " /ide"
+    -- Use --ide flag for automatic connection
+    cmd_string = base_cmd .. " --ide"
   end
 
-  local sse_port_value = claudecode_server_module.state.port
+  local logger = require("claudecode.logger")
+  if matched_port then
+    logger.debug("terminal", "Found matching IDE for CWD", vim.fn.getcwd(), "-> port", matched_port)
+  else
+    logger.debug("terminal", "No CWD match found, using current server port:", sse_port_value)
+  end
   local env_table = {
     ENABLE_IDE_INTEGRATION = "true",
     FORCE_CODE_TERMINAL = "true",
