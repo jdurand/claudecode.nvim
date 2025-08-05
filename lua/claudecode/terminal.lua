@@ -146,10 +146,20 @@ local function get_provider()
     end
     -- Fall through to native provider
   elseif defaults.provider == "auto" then
-    -- Try snacks first, then fallback to native silently
+    -- Try providers in order: snacks -> tmux-popup -> tmux-pane -> native
     local snacks_provider = load_provider("snacks")
     if snacks_provider and snacks_provider.is_available() then
       return snacks_provider
+    end
+
+    local tmux_popup_provider = load_provider("tmux-popup")
+    if tmux_popup_provider and tmux_popup_provider.is_available() then
+      return tmux_popup_provider
+    end
+
+    local tmux_pane_provider = load_provider("tmux-pane")
+    if tmux_pane_provider and tmux_pane_provider.is_available() then
+      return tmux_pane_provider
     end
     -- Fall through to native provider
   elseif defaults.provider == "snacks" then
@@ -178,9 +188,20 @@ local function get_provider()
   elseif defaults.provider == "native" then
     -- noop, will use native provider as default below
     logger.debug("terminal", "Using native terminal provider")
-  elseif defaults.provider == "tmux-pane" or defaults.provider == "tmux-popup" then
-    -- noop, will use native provider as default below
-    logger.debug("terminal", "Using tmux terminal provider")
+  elseif defaults.provider == "tmux-pane" then
+    local tmux_pane_provider = load_provider("tmux-pane")
+    if tmux_pane_provider and tmux_pane_provider.is_available() then
+      return tmux_pane_provider
+    else
+      logger.warn("terminal", "'tmux-pane' provider configured, but not available. Falling back to 'native'.")
+    end
+  elseif defaults.provider == "tmux-popup" then
+    local tmux_popup_provider = load_provider("tmux-popup")
+    if tmux_popup_provider and tmux_popup_provider.is_available() then
+      return tmux_popup_provider
+    else
+      logger.warn("terminal", "'tmux-popup' provider configured, but not available. Falling back to 'native'.")
+    end
   elseif type(defaults.provider) == "string" then
     logger.warn(
       "terminal",
@@ -374,7 +395,18 @@ function M.setup(user_term_config, p_terminal_cmd, p_env)
         defaults[k] = v
       elseif k == "split_width_percentage" and type(v) == "number" and v > 0 and v < 1 then
         defaults[k] = v
-      elseif k == "provider" and (v == "snacks" or v == "native" or v == "external" or v == "auto" or v == "tmux-pane" or v == "tmux-popup" or type(v) == "table") then
+      elseif
+        k == "provider"
+        and (
+          v == "snacks"
+          or v == "native"
+          or v == "external"
+          or v == "auto"
+          or v == "tmux-pane"
+          or v == "tmux-popup"
+          or type(v) == "table"
+        )
+      then
         defaults[k] = v
       elseif k == "show_native_term_exit_tip" and type(v) == "boolean" then
         defaults[k] = v
