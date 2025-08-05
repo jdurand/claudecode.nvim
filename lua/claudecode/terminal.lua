@@ -296,6 +296,21 @@ local function get_claude_command_and_env(cmd_args)
     env_table["CLAUDE_CODE_SSE_PORT"] = tostring(sse_port_value)
   end
 
+  -- Preserve additional Claude environment variables from the current environment
+  local claude_env_vars = {
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_CONFIG_DIR",
+    "CLAUDE_CODE_API_BASE_URL",
+  }
+
+  for _, env_var in ipairs(claude_env_vars) do
+    local value = vim.env[env_var]
+    if value then
+      env_table[env_var] = value
+    end
+  end
+
   -- Merge custom environment variables from config
   for key, value in pairs(defaults.env) do
     env_table[key] = value
